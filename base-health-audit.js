@@ -44,27 +44,48 @@ function pad(str, width) {
 }
 
 /**
- * Build a markdown table from headers and rows with auto-padded columns.
- * Padding ensures columns have breathing room in the rendered output.
+ * Center-pad a string within a given width.
  */
-function mdTable(headers, rows) {
-    // Calculate max width per column (min 3 for the --- separator)
+function centerPad(str, width) {
+    if (str.length >= width) return str;
+    const total = width - str.length;
+    const left = Math.floor(total / 2);
+    const right = total - left;
+    return ' '.repeat(left) + str + ' '.repeat(right);
+}
+
+/**
+ * Build a markdown table from headers and rows with auto-padded columns.
+ * Options:
+ *   align: 'center' | 'left' (default 'left') — column alignment
+ *   minWidth: minimum column width (default 3)
+ */
+function mdTable(headers, rows, options) {
+    const align = (options && options.align) || 'left';
+    const minWidth = (options && options.minWidth) || 3;
+
+    // Calculate max width per column
     const colWidths = headers.map((h, ci) => {
         let max = h.length;
         for (const row of rows) {
             if (row[ci] && row[ci].length > max) max = row[ci].length;
         }
-        return Math.max(max, 3);
+        return Math.max(max, minWidth);
     });
 
-    const paddedHeaders = headers.map((h, ci) => pad(h, colWidths[ci]));
-    const sep = colWidths.map(w => '-'.repeat(w));
+    const padFn = align === 'center' ? centerPad : pad;
+    const paddedHeaders = headers.map((h, ci) => padFn(h, colWidths[ci]));
+    const sep = colWidths.map(w => {
+        if (align === 'center') return ':' + '-'.repeat(Math.max(w - 2, 1)) + ':';
+        return '-'.repeat(w);
+    });
+
     const lines = [
         '| ' + paddedHeaders.join(' | ') + ' |',
         '| ' + sep.join(' | ') + ' |',
     ];
     for (const row of rows) {
-        const paddedRow = row.map((cell, ci) => pad(cell, colWidths[ci]));
+        const paddedRow = row.map((cell, ci) => padFn(cell, colWidths[ci]));
         lines.push('| ' + paddedRow.join(' | ') + ' |');
     }
     return lines.join('\n');
@@ -174,16 +195,20 @@ for (let i = 0; i < tablesToAudit.length; i++) {
     });
 }
 
-// Render Phase 1 — slim overview table
-const phase1Headers = ['Table', 'Records', 'Fields', 'Inbound Links', 'Status'];
+// Render Phase 1 — centered table with bold numbers and spacer columns
+const phase1Headers = ['Table', ' ', 'Records', ' ', 'Fields', ' ', 'Inbound Links', ' ', 'Status'];
 const phase1Rows = tableStats.map(s => [
     s.name,
-    String(s.recordCount),
-    String(s.fieldCount),
-    String(s.inboundCount),
+    '',
+    '**' + s.recordCount + '**',
+    '',
+    '**' + s.fieldCount + '**',
+    '',
+    '**' + s.inboundCount + '**',
+    '',
     s.status,
 ]);
-report += mdTable(phase1Headers, phase1Rows) + '\n\n';
+report += mdTable(phase1Headers, phase1Rows, { align: 'center' }) + '\n\n';
 
 // Relationship details — listed below the table for any table with inbound links
 const tablesWithInbound = tableStats.filter(s => s.inboundCount > 0);
