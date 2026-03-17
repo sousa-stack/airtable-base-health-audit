@@ -62,21 +62,50 @@ let totalRecords = 0;
 let totalFields = 0;
 
 // =============================================================
-// PHASE 1 — Schema Scan
+// SCOPE SELECTION — Pick a table or audit the full base
 // =============================================================
 
 report += '# 🏥 Base Health Audit\n\n';
+output.clear();
+output.markdown(report);
+
+const scopeChoices = [{ label: '🗂️ Audit entire base', value: '__all__' }];
+for (const t of base.tables) {
+    scopeChoices.push({ label: t.name, value: t.id });
+}
+
+const scopeChoice = await input.buttonsAsync(
+    'What would you like to audit?',
+    scopeChoices
+);
+
+const auditAll = scopeChoice === '__all__';
+const tablesToAudit = auditAll
+    ? base.tables
+    : [base.getTable(scopeChoice)];
+
+const scopeLabel = auditAll
+    ? 'Full Base (' + base.tables.length + ' tables)'
+    : tablesToAudit[0].name;
+
+report += '**Scope:** ' + scopeLabel + '\n\n';
+
+// =============================================================
+// PHASE 1 — Schema Scan
+// =============================================================
+
 report += '---\n\n';
 report += '## 🔍 Phase 1 — Schema Scan\n\n';
-renderProgress(report, '🔍 **Scanning tables... (0 of ' + base.tables.length + ' complete)**');
+renderProgress(report, '🔍 **Scanning tables... (0 of ' + tablesToAudit.length + ' complete)**');
 
 // Build a map of tableId -> set of table names that link TO it
+// Always scan ALL tables for relationship mapping even in single-table mode
 const inboundLinks = {}; // tableId -> Set of source table names
 for (const t of base.tables) {
     inboundLinks[t.id] = new Set();
 }
 
-// First pass: discover all linked-record relationships
+// Discover all linked-record relationships across entire base
 for (const t of base.tables) {
     for (const f of t.fields) {
         if (f.type === 'multipleRecordLinks') {
@@ -88,18 +117,18 @@ for (const t of base.tables) {
     }
 }
 
-// Second pass: collect stats per table
-for (let i = 0; i < base.tables.length; i++) {
-    const t = base.tables[i];
-    renderProgress(report, '🔍 **Scanning tables... (' + (i + 1) + ' of ' + base.tables.length + ' complete)**');
+// Collect stats for tables in scope
+for (let i = 0; i < tablesToAudit.length; i++) {
+    const t = tablesToAudit[i];
+    renderProgress(report, '🔍 **Scanning tables... (' + (i + 1) + ' of ' + tablesToAudit.length + ' complete)**');
 
     const query = await t.selectRecordsAsync({ fields: [] }); // zero fields — just need count
     const recordCount = query.records.length;
     const fieldCount = t.fields.length;
     const linkedFrom = inboundLinks[t.id];
-    const linkedFromStr = linkedFrom.size > 0 ? Array.from(linkedFrom).join(', ') : '—';
     const isIsolated = linkedFrom.size === 0;
     const status = isIsolated ? '⚠️ Isolated' : '✅';
+    const inboundCount = linkedFrom.size;
 
     totalRecords += recordCount;
     totalFields += fieldCount;
@@ -118,16 +147,33 @@ for (let i = 0; i < base.tables.length; i++) {
         name: t.name,
         recordCount,
         fieldCount,
-        linkedFromStr,
+        inboundCount,
+        linkedFromNames: Array.from(linkedFrom),
         status,
         isIsolated,
     });
 }
 
-// Render Phase 1 table
-const phase1Headers = ['Table', 'Records', 'Fields', 'Linked From', 'Status'];
-const phase1Rows = tableStats.map(s => [s.name, String(s.recordCount), String(s.fieldCount), s.linkedFromStr, s.status]);
+// Render Phase 1 — slim overview table (no "Linked From" column)
+const phase1Headers = ['Table', 'Records', 'Fields', 'Inbound Links', 'Status'];
+const phase1Rows = tableStats.map(s => [
+    s.name,
+    String(s.recordCount),
+    String(s.fieldCount),
+    String(s.inboundCount),
+    s.status,
+]);
 report += mdTable(phase1Headers, phase1Rows) + '\n\n';
+
+// Relationship details — listed below the table for any table with inbound links
+const tablesWithInbound = tableStats.filter(s => s.inboundCount > 0);
+if (tablesWithInbound.length > 0) {
+    report += '### 🔗 Relationship Map\n\n';
+    for (const s of tablesWithInbound) {
+        report += '- **' + s.name + '** ← ' + s.linkedFromNames.join(', ') + '\n';
+    }
+    report += '\n';
+}
 
 // =============================================================
 // PHASE 2 — Field-Level Analysis
@@ -135,7 +181,7 @@ report += mdTable(phase1Headers, phase1Rows) + '\n\n';
 
 report += '---\n\n';
 report += '## 📊 Phase 2 — Field-Level Analysis\n\n';
-renderProgress(report, '📊 **Analyzing fields... (0 of ' + base.tables.length + ' tables complete)**');
+renderProgress(report, '📊 **Analyzing fields... (0 of ' + tableStats.length + ' tables complete)**');
 
 for (let i = 0; i < tableStats.length; i++) {
     const stat = tableStats[i];
@@ -143,9 +189,8 @@ for (let i = 0; i < tableStats.length; i++) {
     renderProgress(report, '📊 **Analyzing fields... (' + (i + 1) + ' of ' + tableStats.length + ' tables) — ' + t.name + '**');
 
     // Load all records with all fields
-    const fieldNames = t.fields.map(f => f.name);
     let records = [];
-    if (stat.recordCount > 0 && fieldNames.length > 0) {
+    if (stat.recordCount > 0 && t.fields.length > 0) {
         const query = await t.selectRecordsAsync({ fields: t.fields });
         records = query.records;
     }
@@ -180,13 +225,13 @@ for (let i = 0; i < tableStats.length; i++) {
         const fillRate = total > 0 ? Math.round((filledCount / total) * 100) : 0;
 
         if (total > 0 && fillRate === 0) {
-            flags.push('❌ Empty field — candidate for deletion');
+            flags.push('❌ Empty — candidate for deletion');
         } else if (total > 0 && fillRate < 15) {
             flags.push('⚠️ Low fill (' + fillRate + '%) — possibly abandoned');
         }
 
         if (uniqueSelectValues && uniqueSelectValues.size >= 20) {
-            flags.push('🔗 Normalization candidate — ' + uniqueSelectValues.size + ' unique values; consider linked table');
+            flags.push('🔗 Normalization candidate — ' + uniqueSelectValues.size + ' unique values');
         }
 
         if (field.type === 'multipleRecordLinks' && total > 0) {
@@ -221,13 +266,19 @@ for (let i = 0; i < tableStats.length; i++) {
     if (flaggedFields.length === 0) {
         report += '_No issues found — all fields healthy._\n\n';
     } else {
-        const headers = ['Field', 'Type', 'Fill Rate', 'Issue(s)'];
-        const rows = flaggedFields.map(f => [
-            f.name,
-            f.type,
-            f.fillRate,
-            f.flags.join('<br>'),
-        ]);
+        // One row per flag — no <br> tags needed
+        const headers = ['Field', 'Type', 'Fill Rate', 'Issue'];
+        const rows = [];
+        for (const f of flaggedFields) {
+            for (let fi = 0; fi < f.flags.length; fi++) {
+                rows.push([
+                    fi === 0 ? f.name : '',
+                    fi === 0 ? f.type : '',
+                    fi === 0 ? f.fillRate : '',
+                    f.flags[fi],
+                ]);
+            }
+        }
         report += mdTable(headers, rows) + '\n\n';
     }
 }
@@ -350,7 +401,7 @@ report += '### 📋 Recommended Actions\n\n';
 
 const actions = [];
 
-const emptyFields = allFlags.filter(f => f.issue.includes('Empty field'));
+const emptyFields = allFlags.filter(f => f.issue.includes('Empty'));
 if (emptyFields.length > 0) {
     actions.push('**' + emptyFields.length + ' empty field(s)** are candidates for deletion — review and remove to reduce clutter.');
 }
