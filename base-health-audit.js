@@ -56,6 +56,8 @@ function centerPad(str, width) {
 
 /**
  * Build a markdown table from headers and rows with auto-padded columns.
+ * Automatically inserts narrow spacer columns between every data column
+ * so content has breathing room in the rendered output.
  * Options:
  *   align: 'center' | 'left' (default 'left') — column alignment
  *   minWidth: minimum column width (default 3)
@@ -63,18 +65,35 @@ function centerPad(str, width) {
 function mdTable(headers, rows, options) {
     const align = (options && options.align) || 'left';
     const minWidth = (options && options.minWidth) || 3;
+    const spacer = '  ';  // narrow empty spacer cell
+
+    // Insert spacer columns between every real column
+    const spHeaders = [];
+    const spRows = rows.map(() => []);
+    for (let ci = 0; ci < headers.length; ci++) {
+        if (ci > 0) {
+            spHeaders.push(' ');
+            for (let ri = 0; ri < rows.length; ri++) {
+                spRows[ri].push(spacer);
+            }
+        }
+        spHeaders.push(headers[ci]);
+        for (let ri = 0; ri < rows.length; ri++) {
+            spRows[ri].push(rows[ri][ci] || '');
+        }
+    }
 
     // Calculate max width per column
-    const colWidths = headers.map((h, ci) => {
+    const colWidths = spHeaders.map((h, ci) => {
         let max = h.length;
-        for (const row of rows) {
+        for (const row of spRows) {
             if (row[ci] && row[ci].length > max) max = row[ci].length;
         }
         return Math.max(max, minWidth);
     });
 
     const padFn = align === 'center' ? centerPad : pad;
-    const paddedHeaders = headers.map((h, ci) => padFn(h, colWidths[ci]));
+    const paddedHeaders = spHeaders.map((h, ci) => padFn(h, colWidths[ci]));
     const sep = colWidths.map(w => {
         if (align === 'center') return ':' + '-'.repeat(Math.max(w - 2, 1)) + ':';
         return '-'.repeat(w);
@@ -84,7 +103,7 @@ function mdTable(headers, rows, options) {
         '| ' + paddedHeaders.join(' | ') + ' |',
         '| ' + sep.join(' | ') + ' |',
     ];
-    for (const row of rows) {
+    for (const row of spRows) {
         const paddedRow = row.map((cell, ci) => padFn(cell, colWidths[ci]));
         lines.push('| ' + paddedRow.join(' | ') + ' |');
     }
@@ -195,17 +214,13 @@ for (let i = 0; i < tablesToAudit.length; i++) {
     });
 }
 
-// Render Phase 1 — centered table with bold numbers and spacer columns
-const phase1Headers = ['Table', ' ', 'Records', ' ', 'Fields', ' ', 'Inbound Links', ' ', 'Status'];
+// Render Phase 1 — centered table with bold numbers
+const phase1Headers = ['Table', 'Records', 'Fields', 'Inbound Links', 'Status'];
 const phase1Rows = tableStats.map(s => [
     s.name,
-    '',
     '**' + s.recordCount + '**',
-    '',
     '**' + s.fieldCount + '**',
-    '',
     '**' + s.inboundCount + '**',
-    '',
     s.status,
 ]);
 report += mdTable(phase1Headers, phase1Rows, { align: 'center' }) + '\n\n';
@@ -447,6 +462,7 @@ report += mdTable(summaryHeaders, summaryRows) + '\n\n';
 
 // Top Issues — sorted by severity (errors first, then warnings)
 if (allFlags.length > 0) {
+    report += '---\n\n';
     report += '### 🚨 Top Issues\n\n';
     const sorted = [...allFlags].sort((a, b) => {
         const sev = { error: 0, warning: 1 };
@@ -464,6 +480,7 @@ if (allFlags.length > 0) {
 }
 
 // Recommended Actions
+report += '---\n\n';
 report += '### 📋 Recommended Actions\n\n';
 
 const actions = [];
