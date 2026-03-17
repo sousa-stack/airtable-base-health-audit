@@ -36,16 +36,36 @@ function renderProgress(accumulated, progressLine) {
 }
 
 /**
- * Build a markdown table from headers and rows.
+ * Pad a string to a minimum width with trailing spaces.
+ */
+function pad(str, width) {
+    if (str.length >= width) return str;
+    return str + ' '.repeat(width - str.length);
+}
+
+/**
+ * Build a markdown table from headers and rows with auto-padded columns.
+ * Padding ensures columns have breathing room in the rendered output.
  */
 function mdTable(headers, rows) {
-    const sep = headers.map(() => '---');
+    // Calculate max width per column (min 3 for the --- separator)
+    const colWidths = headers.map((h, ci) => {
+        let max = h.length;
+        for (const row of rows) {
+            if (row[ci] && row[ci].length > max) max = row[ci].length;
+        }
+        return Math.max(max, 3);
+    });
+
+    const paddedHeaders = headers.map((h, ci) => pad(h, colWidths[ci]));
+    const sep = colWidths.map(w => '-'.repeat(w));
     const lines = [
-        '| ' + headers.join(' | ') + ' |',
+        '| ' + paddedHeaders.join(' | ') + ' |',
         '| ' + sep.join(' | ') + ' |',
     ];
     for (const row of rows) {
-        lines.push('| ' + row.join(' | ') + ' |');
+        const paddedRow = row.map((cell, ci) => pad(cell, colWidths[ci]));
+        lines.push('| ' + paddedRow.join(' | ') + ' |');
     }
     return lines.join('\n');
 }
@@ -154,7 +174,7 @@ for (let i = 0; i < tablesToAudit.length; i++) {
     });
 }
 
-// Render Phase 1 — slim overview table (no "Linked From" column)
+// Render Phase 1 — slim overview table
 const phase1Headers = ['Table', 'Records', 'Fields', 'Inbound Links', 'Status'];
 const phase1Rows = tableStats.map(s => [
     s.name,
@@ -168,6 +188,7 @@ report += mdTable(phase1Headers, phase1Rows) + '\n\n';
 // Relationship details — listed below the table for any table with inbound links
 const tablesWithInbound = tableStats.filter(s => s.inboundCount > 0);
 if (tablesWithInbound.length > 0) {
+    report += '---\n\n';
     report += '### 🔗 Relationship Map\n\n';
     for (const s of tablesWithInbound) {
         report += '- **' + s.name + '** ← ' + s.linkedFromNames.join(', ') + '\n';
@@ -186,18 +207,29 @@ renderProgress(report, '📊 **Analyzing fields... (0 of ' + tableStats.length +
 for (let i = 0; i < tableStats.length; i++) {
     const stat = tableStats[i];
     const t = stat.table;
-    renderProgress(report, '📊 **Analyzing fields... (' + (i + 1) + ' of ' + tableStats.length + ' tables) — ' + t.name + '**');
+    const totalFieldsInTable = t.fields.length;
+
+    renderProgress(report, '📊 **Analyzing table ' + (i + 1) + ' of ' + tableStats.length + ' — ' + t.name + '**\n\n🔍 Loading records...');
 
     // Load all records with all fields
     let records = [];
-    if (stat.recordCount > 0 && t.fields.length > 0) {
+    if (stat.recordCount > 0 && totalFieldsInTable > 0) {
         const query = await t.selectRecordsAsync({ fields: t.fields });
         records = query.records;
     }
 
+    renderProgress(report, '📊 **Analyzing table ' + (i + 1) + ' of ' + tableStats.length + ' — ' + t.name + '**\n\n🔍 Analyzing field 0 of ' + totalFieldsInTable + '...');
+
     const flaggedFields = [];
 
-    for (const field of t.fields) {
+    for (let fi = 0; fi < t.fields.length; fi++) {
+        const field = t.fields[fi];
+
+        // Update progress every 10 fields or on the last field
+        if (fi % 10 === 0 || fi === t.fields.length - 1) {
+            renderProgress(report, '📊 **Analyzing table ' + (i + 1) + ' of ' + tableStats.length + ' — ' + t.name + '**\n\n🔍 Analyzing field ' + (fi + 1) + ' of ' + totalFieldsInTable + '... `' + field.name + '`');
+        }
+
         const flags = [];
         let filledCount = 0;
         let uniqueSelectValues = null;
@@ -242,8 +274,9 @@ for (let i = 0; i < tableStats.length; i++) {
         }
 
         if (flags.length > 0) {
+            const fieldName = field.name && field.name.trim() !== '' ? field.name : '(unnamed field)';
             flaggedFields.push({
-                name: field.name,
+                name: fieldName,
                 type: field.type,
                 fillRate: fillRate + '%',
                 flags,
@@ -251,7 +284,7 @@ for (let i = 0; i < tableStats.length; i++) {
             for (const flag of flags) {
                 allFlags.push({
                     table: t.name,
-                    field: field.name,
+                    field: fieldName,
                     severity: flag.startsWith('❌') ? 'error' : 'warning',
                     issue: flag,
                 });
@@ -266,16 +299,16 @@ for (let i = 0; i < tableStats.length; i++) {
     if (flaggedFields.length === 0) {
         report += '_No issues found — all fields healthy._\n\n';
     } else {
-        // One row per flag — no <br> tags needed
+        // One row per flag — field name repeated on every row for clarity
         const headers = ['Field', 'Type', 'Fill Rate', 'Issue'];
         const rows = [];
         for (const f of flaggedFields) {
-            for (let fi = 0; fi < f.flags.length; fi++) {
+            for (const flag of f.flags) {
                 rows.push([
-                    fi === 0 ? f.name : '',
-                    fi === 0 ? f.type : '',
-                    fi === 0 ? f.fillRate : '',
-                    f.flags[fi],
+                    f.name,
+                    f.type,
+                    f.fillRate,
+                    flag,
                 ]);
             }
         }
@@ -306,18 +339,27 @@ if (dupChoice === '__skip__') {
     const dupTable = base.getTable(dupChoice);
     const keyField = await input.fieldAsync('Pick the key field for uniqueness check:', dupTable);
 
-    renderProgress(report, '🔍 **Scanning for duplicates in ' + dupTable.name + '...**');
+    renderProgress(report, '🔍 **Loading records from ' + dupTable.name + '...**');
 
     const dupQuery = await dupTable.selectRecordsAsync({ fields: dupTable.fields });
+    const dupRecords = dupQuery.records;
     const groups = {};
 
-    for (const rec of dupQuery.records) {
+    const totalDupRecords = dupRecords.length;
+    for (let ri = 0; ri < dupRecords.length; ri++) {
+        // Update progress every 500 records
+        if (ri % 500 === 0) {
+            renderProgress(report, '🔍 **Scanning for duplicates in ' + dupTable.name + '... (' + ri + ' of ' + totalDupRecords + ' records checked)**');
+        }
+        const rec = dupRecords[ri];
         let val = rec.getCellValueAsString(keyField);
         if (!val || val.trim() === '') continue;
         val = val.trim();
         if (!groups[val]) groups[val] = [];
         groups[val].push(rec.id);
     }
+
+    renderProgress(report, '🔍 **Analyzing duplicate groups...**');
 
     const dupes = Object.entries(groups).filter(([_, ids]) => ids.length > 1);
 
