@@ -137,7 +137,7 @@ report += '**Scope:** ' + scopeLabel + '\n\n';
 
 report += '---\n\n';
 report += '## 🔍 Phase 1 — Schema Scan\n\n';
-renderProgress(report, '🔍 **Scanning tables... (0 of ' + tablesToAudit.length + ' complete)**');
+renderProgress(report, '🔍 **Scanning tables... (0 of ' + tablesToAudit.length + ' complete)**\n\n_⏳ Large bases may take a minute — the script is still running._');
 
 // Build a map of tableId -> set of table names that link TO it
 // Always scan ALL tables for relationship mapping even in single-table mode
@@ -227,14 +227,14 @@ if (tablesWithInbound.length > 0) {
 
 report += '---\n\n';
 report += '## 📊 Phase 2 — Field-Level Analysis\n\n';
-renderProgress(report, '📊 **Analyzing fields... (0 of ' + tableStats.length + ' tables complete)**');
+renderProgress(report, '📊 **Analyzing fields... (0 of ' + tableStats.length + ' tables complete)**\n\n_⏳ This is the most intensive phase — tables with many fields and records take longer to analyze._');
 
 for (let i = 0; i < tableStats.length; i++) {
     const stat = tableStats[i];
     const t = stat.table;
     const totalFieldsInTable = t.fields.length;
 
-    renderProgress(report, '📊 **Analyzing table ' + (i + 1) + ' of ' + tableStats.length + ' — ' + t.name + '**\n\n🔍 Loading records...');
+    renderProgress(report, '📊 **Analyzing table ' + (i + 1) + ' of ' + tableStats.length + ' — ' + t.name + '**\n\n🔍 Loading ' + stat.recordCount + ' records...\n\n_⏳ This is the most intensive phase — tables with many fields and records take longer to analyze._');
 
     // Load all records with all fields
     let records = [];
@@ -252,7 +252,7 @@ for (let i = 0; i < tableStats.length; i++) {
 
         // Update progress every 10 fields or on the last field
         if (fi % 10 === 0 || fi === t.fields.length - 1) {
-            renderProgress(report, '📊 **Analyzing table ' + (i + 1) + ' of ' + tableStats.length + ' — ' + t.name + '**\n\n🔍 Analyzing field ' + (fi + 1) + ' of ' + totalFieldsInTable + '... `' + field.name + '`');
+            renderProgress(report, '📊 **Analyzing table ' + (i + 1) + ' of ' + tableStats.length + ' — ' + t.name + '**\n\n🔍 Analyzing field ' + (fi + 1) + ' of ' + totalFieldsInTable + '... `' + field.name + '`\n\n_⏳ This is the most intensive phase — tables with many fields and records take longer to analyze._');
         }
 
         const flags = [];
@@ -364,7 +364,7 @@ if (dupChoice === '__skip__') {
     const dupTable = base.getTable(dupChoice);
     const keyField = await input.fieldAsync('Pick the key field for uniqueness check:', dupTable);
 
-    renderProgress(report, '🔍 **Loading records from ' + dupTable.name + '...**');
+    renderProgress(report, '🔍 **Loading records from ' + dupTable.name + '...**\n\n_⏳ Large tables may take a moment to scan for duplicates._');
 
     const dupQuery = await dupTable.selectRecordsAsync({ fields: dupTable.fields });
     const dupRecords = dupQuery.records;
@@ -374,7 +374,7 @@ if (dupChoice === '__skip__') {
     for (let ri = 0; ri < dupRecords.length; ri++) {
         // Update progress every 500 records
         if (ri % 500 === 0) {
-            renderProgress(report, '🔍 **Scanning for duplicates in ' + dupTable.name + '... (' + ri + ' of ' + totalDupRecords + ' records checked)**');
+            renderProgress(report, '🔍 **Scanning for duplicates in ' + dupTable.name + '... (' + ri + ' of ' + totalDupRecords + ' records checked)**\n\n_⏳ Large tables may take a moment to scan for duplicates._');
         }
         const rec = dupRecords[ri];
         let val = rec.getCellValueAsString(keyField);
