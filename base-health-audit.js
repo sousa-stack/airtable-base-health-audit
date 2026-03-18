@@ -233,6 +233,13 @@ report += '---\n\n';
 report += '## 📊 Phase 2 — Field-Level Analysis\n\n';
 renderProgress(report, '📊 **Analyzing fields... (0 of ' + tableStats.length + ' tables complete)**\n\n_⏳ This is the most intensive phase — tables with many fields and records take longer to analyze._');
 
+// Computed fields are always "filled" if they exist — skip them
+const SKIP_TYPES = new Set([
+    'formula', 'rollup', 'count', 'multipleLookupValues',
+    'autoNumber', 'createdTime', 'lastModifiedTime',
+    'createdBy', 'lastModifiedBy', 'button', 'externalSyncSource', 'aiText',
+]);
+
 for (let i = 0; i < tableStats.length; i++) {
     const stat = tableStats[i];
     const t = stat.table;
@@ -242,6 +249,7 @@ for (let i = 0; i < tableStats.length; i++) {
 
     for (let fi = 0; fi < t.fields.length; fi++) {
         const field = t.fields[fi];
+        if (SKIP_TYPES.has(field.type)) continue;
 
         // Update progress every 5 fields or on the first/last field
         if (fi === 0 || fi % 5 === 0 || fi === t.fields.length - 1) {
@@ -262,7 +270,8 @@ for (let i = 0; i < tableStats.length; i++) {
 
         for (const rec of records) {
             const val = rec.getCellValue(field);
-            if (!isEmpty(val)) {
+            // Checkboxes: only `true` counts as filled (false/null = unchecked)
+            if (field.type === 'checkbox' ? val === true : !isEmpty(val)) {
                 filledCount++;
             }
 
@@ -392,11 +401,14 @@ if (dupChoice === '__skip__') {
         report += '✅ No duplicates found in **' + dupTable.name + '** on field **' + keyField.name + '**.\n\n';
     } else {
         report += '⚠️ Found **' + dupes.length + '** duplicate value(s) in **' + dupTable.name + '** on field **' + keyField.name + '**:\n\n';
+        const MAX_IDS_SHOWN = 3;
         const headers = ['Value', 'Count', 'Record IDs'];
         const rows = dupes.map(([val, ids]) => [
             val.length > 40 ? val.substring(0, 37) + '...' : val,
             String(ids.length),
-            ids.join(', '),
+            ids.length > MAX_IDS_SHOWN
+                ? ids.slice(0, MAX_IDS_SHOWN).join(', ') + ' _+' + (ids.length - MAX_IDS_SHOWN) + ' more_'
+                : ids.join(', '),
         ]);
         report += mdTable(headers, rows) + '\n\n';
 
