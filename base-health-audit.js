@@ -7,17 +7,6 @@
 // --- Helpers -------------------------------------------------
 
 /**
- * Chunk an array into batches of a given size.
- */
-function chunk(arr, size) {
-    const chunks = [];
-    for (let i = 0; i < arr.length; i += size) {
-        chunks.push(arr.slice(i, i + size));
-    }
-    return chunks;
-}
-
-/**
  * Check if a cell value is "empty" for fill-rate purposes.
  */
 function isEmpty(value) {
@@ -36,77 +25,76 @@ function renderProgress(accumulated, progressLine) {
 }
 
 /**
- * Pad a string to a minimum width with trailing spaces.
+ * Human-readable field type labels.
  */
-function pad(str, width) {
-    if (str.length >= width) return str;
-    return str + ' '.repeat(width - str.length);
+const FIELD_TYPE_LABELS = {
+    singleLineText: 'Text',
+    multilineText: 'Long Text',
+    richText: 'Rich Text',
+    singleSelect: 'Single Select',
+    multipleSelects: 'Multi Select',
+    multipleRecordLinks: 'Linked Record',
+    number: 'Number',
+    percent: 'Percent',
+    currency: 'Currency',
+    date: 'Date',
+    dateTime: 'Date & Time',
+    duration: 'Duration',
+    checkbox: 'Checkbox',
+    formula: 'Formula',
+    rollup: 'Rollup',
+    count: 'Count',
+    multipleLookupValues: 'Lookup',
+    multipleAttachments: 'Attachment',
+    singleCollaborator: 'Collaborator',
+    multipleCollaborators: 'Collaborators',
+    email: 'Email',
+    url: 'URL',
+    phoneNumber: 'Phone',
+    rating: 'Rating',
+    barcode: 'Barcode',
+    createdTime: 'Created Time',
+    lastModifiedTime: 'Modified Time',
+    createdBy: 'Created By',
+    lastModifiedBy: 'Modified By',
+    autoNumber: 'Auto Number',
+    button: 'Button',
+    externalSyncSource: 'Sync Source',
+    aiText: 'AI Text',
+};
+
+function fieldTypeLabel(type) {
+    return FIELD_TYPE_LABELS[type] || type;
 }
 
 /**
- * Center-pad a string within a given width.
+ * Build a markdown table with en-space (\u2002) padding for breathing room.
+ * Airtable's renderer collapses normal spaces, but Unicode en-spaces survive.
  */
-function centerPad(str, width) {
-    if (str.length >= width) return str;
-    const total = width - str.length;
-    const left = Math.floor(total / 2);
-    const right = total - left;
-    return ' '.repeat(left) + str + ' '.repeat(right);
-}
+const EN = '\u2002'; // en-space — survives Airtable markdown rendering
+const CELL_PAD = EN + EN; // two en-spaces on each side of every cell
 
-/**
- * Build a markdown table from headers and rows with auto-padded columns.
- * Automatically inserts narrow spacer columns between every data column
- * so content has breathing room in the rendered output.
- * Options:
- *   align: 'center' | 'left' (default 'left') — column alignment
- *   minWidth: minimum column width (default 3)
- */
-function mdTable(headers, rows, options) {
-    const align = (options && options.align) || 'left';
-    const minWidth = (options && options.minWidth) || 3;
-    const spacer = '  ';  // narrow empty spacer cell
+function mdTable(headers, rows) {
+    const lines = [];
 
-    // Insert spacer columns between every real column
-    const spHeaders = [];
-    const spRows = rows.map(() => []);
-    for (let ci = 0; ci < headers.length; ci++) {
-        if (ci > 0) {
-            spHeaders.push(' ');
-            for (let ri = 0; ri < rows.length; ri++) {
-                spRows[ri].push(spacer);
-            }
-        }
-        spHeaders.push(headers[ci]);
-        for (let ri = 0; ri < rows.length; ri++) {
-            spRows[ri].push(rows[ri][ci] || '');
-        }
+    // Header row
+    const headerCells = headers.map(function (h) { return CELL_PAD + h + CELL_PAD; });
+    lines.push('| ' + headerCells.join(' | ') + ' |');
+
+    // Separator row
+    const sep = headers.map(function () { return '---'; });
+    lines.push('| ' + sep.join(' | ') + ' |');
+
+    // Data rows
+    for (const row of rows) {
+        const cells = headers.map(function (_, ci) {
+            var cell = ci < row.length ? row[ci] : '';
+            if (cell === undefined || cell === null) cell = '';
+            return CELL_PAD + cell + CELL_PAD;
+        });
+        lines.push('| ' + cells.join(' | ') + ' |');
     }
 
-    // Calculate max width per column
-    const colWidths = spHeaders.map((h, ci) => {
-        let max = h.length;
-        for (const row of spRows) {
-            if (row[ci] && row[ci].length > max) max = row[ci].length;
-        }
-        return Math.max(max, minWidth);
-    });
-
-    const padFn = align === 'center' ? centerPad : pad;
-    const paddedHeaders = spHeaders.map((h, ci) => padFn(h, colWidths[ci]));
-    const sep = colWidths.map(w => {
-        if (align === 'center') return ':' + '-'.repeat(Math.max(w - 2, 1)) + ':';
-        return '-'.repeat(w);
-    });
-
-    const lines = [
-        '| ' + paddedHeaders.join(' | ') + ' |',
-        '| ' + sep.join(' | ') + ' |',
-    ];
-    for (const row of spRows) {
-        const paddedRow = row.map((cell, ci) => padFn(cell, colWidths[ci]));
-        lines.push('| ' + paddedRow.join(' | ') + ' |');
-    }
     return lines.join('\n');
 }
 
@@ -134,7 +122,7 @@ for (const t of base.tables) {
     scopeChoices.push({ label: t.name, value: t.id });
 }
 
-const scopeChoice = await input.buttonsAsync(
+const scopeChoice = await input.selectAsync(
     'What would you like to audit?',
     scopeChoices
 );
@@ -180,7 +168,7 @@ for (const t of base.tables) {
 // Collect stats for tables in scope
 for (let i = 0; i < tablesToAudit.length; i++) {
     const t = tablesToAudit[i];
-    renderProgress(report, '🔍 **Scanning tables... (' + (i + 1) + ' of ' + tablesToAudit.length + ' complete)**');
+    renderProgress(report, '🔍 **Scanning tables... (' + (i + 1) + ' of ' + tablesToAudit.length + ' complete)**\n\n_⏳ Large bases may take a minute — the script is still running._');
 
     const query = await t.selectRecordsAsync({ fields: [] }); // zero fields — just need count
     const recordCount = query.records.length;
@@ -214,7 +202,7 @@ for (let i = 0; i < tablesToAudit.length; i++) {
     });
 }
 
-// Render Phase 1 — centered table with bold numbers
+// Render Phase 1 — overview table with bold numbers
 const phase1Headers = ['Table', 'Records', 'Fields', 'Inbound Links', 'Status'];
 const phase1Rows = tableStats.map(s => [
     s.name,
@@ -223,7 +211,7 @@ const phase1Rows = tableStats.map(s => [
     '**' + s.inboundCount + '**',
     s.status,
 ]);
-report += mdTable(phase1Headers, phase1Rows, { align: 'center' }) + '\n\n';
+report += mdTable(phase1Headers, phase1Rows) + '\n\n';
 
 // Relationship details — listed below the table for any table with inbound links
 const tablesWithInbound = tableStats.filter(s => s.inboundCount > 0);
@@ -249,25 +237,21 @@ for (let i = 0; i < tableStats.length; i++) {
     const t = stat.table;
     const totalFieldsInTable = t.fields.length;
 
-    renderProgress(report, '📊 **Analyzing table ' + (i + 1) + ' of ' + tableStats.length + ' — ' + t.name + '**\n\n🔍 Loading ' + stat.recordCount + ' records...\n\n_⏳ This is the most intensive phase — tables with many fields and records take longer to analyze._');
-
-    // Load all records with all fields
-    let records = [];
-    if (stat.recordCount > 0 && totalFieldsInTable > 0) {
-        const query = await t.selectRecordsAsync({ fields: t.fields });
-        records = query.records;
-    }
-
-    renderProgress(report, '📊 **Analyzing table ' + (i + 1) + ' of ' + tableStats.length + ' — ' + t.name + '**\n\n🔍 Analyzing field 0 of ' + totalFieldsInTable + '...');
-
     const flaggedFields = [];
 
     for (let fi = 0; fi < t.fields.length; fi++) {
         const field = t.fields[fi];
 
-        // Update progress every 10 fields or on the last field
-        if (fi % 10 === 0 || fi === t.fields.length - 1) {
+        // Update progress every 5 fields or on the first/last field
+        if (fi === 0 || fi % 5 === 0 || fi === t.fields.length - 1) {
             renderProgress(report, '📊 **Analyzing table ' + (i + 1) + ' of ' + tableStats.length + ' — ' + t.name + '**\n\n🔍 Analyzing field ' + (fi + 1) + ' of ' + totalFieldsInTable + '... `' + field.name + '`\n\n_⏳ This is the most intensive phase — tables with many fields and records take longer to analyze._');
+        }
+
+        // Load records for just this one field — keeps each query lightweight
+        let records = [];
+        if (stat.recordCount > 0) {
+            const query = await t.selectRecordsAsync({ fields: [field] });
+            records = query.records;
         }
 
         const flags = [];
@@ -317,7 +301,7 @@ for (let i = 0; i < tableStats.length; i++) {
             const fieldName = field.name && field.name.trim() !== '' ? field.name : '(unnamed field)';
             flaggedFields.push({
                 name: fieldName,
-                type: field.type,
+                type: fieldTypeLabel(field.type),
                 fillRate: fillRate + '%',
                 flags,
             });
@@ -368,7 +352,7 @@ output.markdown(report);
 const dupChoices = tableStats.map(s => ({ label: s.name, value: s.name }));
 dupChoices.push({ label: '⏭️ Skip duplicate check', value: '__skip__' });
 
-const dupChoice = await input.buttonsAsync(
+const dupChoice = await input.selectAsync(
     'Select a table to check for duplicates (or skip):',
     dupChoices
 );
@@ -381,7 +365,7 @@ if (dupChoice === '__skip__') {
 
     renderProgress(report, '🔍 **Loading records from ' + dupTable.name + '...**\n\n_⏳ Large tables may take a moment to scan for duplicates._');
 
-    const dupQuery = await dupTable.selectRecordsAsync({ fields: dupTable.fields });
+    const dupQuery = await dupTable.selectRecordsAsync({ fields: [keyField] });
     const dupRecords = dupQuery.records;
     const groups = {};
 
