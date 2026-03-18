@@ -117,24 +117,25 @@ report += '# 🏥 Base Health Audit\n\n';
 output.clear();
 output.markdown(report);
 
-const scopeChoices = [{ label: '🗂️ Audit entire base', value: '__all__' }];
-for (const t of base.tables) {
-    scopeChoices.push({ label: t.name, value: t.id });
-}
-
-const scopeChoice = await input.selectAsync(
+const scopeChoice = await input.buttonsAsync(
     'What would you like to audit?',
-    scopeChoices
+    [
+        { label: '🗂️ Audit entire base', value: '__all__' },
+        { label: '📋 Audit a single table', value: '__pick__' },
+    ]
 );
 
-const auditAll = scopeChoice === '__all__';
-const tablesToAudit = auditAll
-    ? base.tables
-    : [base.getTable(scopeChoice)];
+let tablesToAudit;
+let scopeLabel;
 
-const scopeLabel = auditAll
-    ? 'Full Base (' + base.tables.length + ' tables)'
-    : tablesToAudit[0].name;
+if (scopeChoice === '__pick__') {
+    const pickedTable = await input.tableAsync('Pick a table to audit:');
+    tablesToAudit = [pickedTable];
+    scopeLabel = pickedTable.name;
+} else {
+    tablesToAudit = base.tables;
+    scopeLabel = 'Full Base (' + base.tables.length + ' tables)';
+}
 
 report += '**Scope:** ' + scopeLabel + '\n\n';
 
@@ -349,18 +350,18 @@ report += '## 🔍 Phase 3 — Duplicate Detection\n\n';
 output.clear();
 output.markdown(report);
 
-const dupChoices = tableStats.map(s => ({ label: s.name, value: s.name }));
-dupChoices.push({ label: '⏭️ Skip duplicate check', value: '__skip__' });
-
-const dupChoice = await input.selectAsync(
-    'Select a table to check for duplicates (or skip):',
-    dupChoices
+const dupChoice = await input.buttonsAsync(
+    'Would you like to check a table for duplicate records?',
+    [
+        { label: '🔍 Check for duplicates', value: '__pick__' },
+        { label: '⏭️ Skip', value: '__skip__' },
+    ]
 );
 
 if (dupChoice === '__skip__') {
     report += '_Duplicate check skipped by user._\n\n';
 } else {
-    const dupTable = base.getTable(dupChoice);
+    const dupTable = await input.tableAsync('Pick a table to check for duplicates:');
     const keyField = await input.fieldAsync('Pick the key field for uniqueness check:', dupTable);
 
     renderProgress(report, '🔍 **Loading records from ' + dupTable.name + '...**\n\n_⏳ Large tables may take a moment to scan for duplicates._');
